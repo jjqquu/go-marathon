@@ -65,15 +65,65 @@ type DeploymentPlan struct {
 	} `json:"target"`
 }
 
+// TODO: remove this workaround when marathon fix its bug of deployment api
+type TmpActions struct {
+        Actions []*TmpDeploymentStep `json:"actions"`
+}
+
+type TmpDeploymentStep struct {
+        Type string `json:"type"`
+        App  string `json:"app"`
+}
+
+type TmpDeployment struct {
+        ID             string            `json:"id"`
+        Version        string            `json:"version"`
+        CurrentStep    int               `json:"currentStep"`
+        TotalSteps     int               `json:"totalSteps"`
+        AffectedApps   []string          `json:"affectedApps"`
+        Steps          []*TmpActions     `json:"steps"`
+        CurrentActions []*DeploymentStep `json:"currentActions"`
+}
+
 // Deployments retrieves a list of current deployments
 func (r *marathonClient) Deployments() ([]*Deployment, error) {
-	var deployments []*Deployment
-	err := r.apiGet(marathonAPIDeployments, nil, &deployments)
-	if err != nil {
-		return nil, err
-	}
+        var deployments []*Deployment
+        err := r.apiGet(marathonAPIDeployments, nil, &deployments)
+        // TODO: remove this workaround when marathon fix its bug of deployment api
+        if err == ErrInvalidResponse {
+                deployments = nil
+                var tmpDeployments []*TmpDeployment
+                err := r.apiGet(marathonAPIDeployments, nil, &tmpDeployments)
+                if err != nil {
+                        return nil, err
+                }
+                for _, tmpDeployment := range tmpDeployments {
+                        deployment := &Deployment{
+                                ID:             tmpDeployment.ID,
+                                Version:        tmpDeployment.Version,
+                                CurrentStep:    tmpDeployment.CurrentStep,
+                                TotalSteps:     tmpDeployment.TotalSteps,
+                                AffectedApps:   tmpDeployment.AffectedApps,
+                                CurrentActions: tmpDeployment.CurrentActions,
+                        }
+                        for _, tmpStep := range tmpDeployment.Steps {
+                                var oneStepList []*DeploymentStep
+                                for _, tmpAction := range tmpStep.Actions {
+                                        step := &DeploymentStep{
+                                                Action: tmpAction.Type,
+                                                App:    tmpAction.App,
+                                        }
+                                        oneStepList = append(oneStepList, step)
+                                }
+                                deployment.Steps = append(deployment.Steps, oneStepList)
+                        }
+                        deployments = append(deployments, deployment)
+                }
+        } else if err != nil {
+                return nil, err
+        }
 
-	return deployments, nil
+        return deployments, nil
 }
 
 // DeleteDeployment delete a current deployment from marathon
